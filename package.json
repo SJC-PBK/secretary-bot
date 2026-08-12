@@ -1,0 +1,15 @@
+{
+  "name": "secretary-bot",
+  "version": "0.1.0",
+  "description": "슬랙 DM으로 소통하는 개인 비서 봇 (질문답변·문서초안·리마인더)",
+  "type": "commonjs",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "@slack/bolt": "^3.19.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
