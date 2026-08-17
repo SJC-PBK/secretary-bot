@@ -1,6 +1,6 @@
 # 모듈: service-profile (v2 — 장기기억/성장)
 
-버전: v0.9.0 · 상태: 코드완료(런타임 미검증) · 레이어: service
+버전: v1.0.0 · 상태: 가동·검증 · 레이어: service
 담당 파일: `lib/profile.js` (+ 보조 `lib/session.js`)
 
 ## 역할

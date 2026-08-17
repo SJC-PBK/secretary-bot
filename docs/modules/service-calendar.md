@@ -1,6 +1,6 @@
 # 모듈: service-calendar (v2)
 
-버전: v0.9.0 · 상태: 코드완료(런타임 미검증) · 레이어: service
+버전: v1.0.0 · 상태: 가동·검증 · 레이어: service
 담당 파일: `lib/calendar.js` (봇측) + `gas/Code.gs` (사장님 배포분, GAS)
 
 ## 역할

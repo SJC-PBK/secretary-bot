@@ -7,12 +7,12 @@
 
 | 모듈 | 레이어 | 담당 파일 | 버전 | 상태 | 역할 |
 |------|--------|----------|------|------|------|
-| server-app | server | app.js, lib/auth.js | v0.9.0 | 코드완료(런타임 미검증) | Bolt Socket Mode 진입, DM 이벤트 라우팅, 접근 통제, 응답 발송 |
-| service-claude | service | lib/claude.js | v0.9.0 | 코드완료(런타임 미검증) | 헤드리스 Claude(`claude -p`) 호출 래퍼 — 질문답변·초안·리마인더 파싱 (도구 미부여) |
-| service-reminder | service | lib/reminders.js, lib/scheduler.js | v0.9.0 | 코드완료(런타임 미검증) | 리마인더 등록·조회·취소(저장) + 도래 시각 발송 스케줄 |
-| service-memory | service | lib/memory.js | v0.9.0 | 코드완료(런타임 미검증) | 사용자별 대화 맥락 저장·로드 |
-| service-calendar (v2) | service | lib/calendar.js + gas/Code.gs | v0.9.0 | 코드완료(런타임 미검증) | GAS 경유 구글 캘린더 등록·조회·수정·삭제 |
-| service-profile (v2) | service | lib/profile.js + lib/session.js | v0.9.0 | 코드완료(런타임 미검증) | 장기기억(지속 프로필·자동축적·명시기억·통제) |
+| server-app | server | app.js, lib/auth.js | v1.0.0 | 가동·검증(2026-08-13) | Bolt Socket Mode 진입, DM 이벤트 라우팅, 접근 통제, 응답 발송 |
+| service-claude | service | lib/claude.js | v1.0.0 | 가동·검증(2026-08-13) | 헤드리스 Claude(`claude -p`) 호출 래퍼 — 질문답변·초안·리마인더 파싱 (도구 미부여) |
+| service-reminder | service | lib/reminders.js, lib/scheduler.js | v1.0.0 | 가동·검증(2026-08-13) | 리마인더 등록·조회·취소(저장) + 도래 시각 발송 스케줄 |
+| service-memory | service | lib/memory.js | v1.0.0 | 가동·검증(2026-08-13) | 사용자별 대화 맥락 저장·로드 |
+| service-calendar (v2) | service | lib/calendar.js + gas/Code.gs | v1.0.0 | 가동·검증(2026-08-13) | GAS 경유 구글 캘린더 등록·조회·수정·삭제 |
+| service-profile (v2) | service | lib/profile.js + lib/session.js | v1.0.0 | 가동·검증(2026-08-13) | 장기기억(지속 프로필·자동축적·명시기억·통제) |
 
 > v1.0.0 확정 조건: T014 서버 실동작 테스트(Slack 왕복·리마인더 1건 도착) 통과.
 > v2 모듈 v1.0.0 확정 조건: GAS 웹앱 배포 + 서버 반영 후 캘린더 CRUD·장기기억 실동작 확인.
