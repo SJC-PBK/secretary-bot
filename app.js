@@ -12,6 +12,7 @@ const gdrive = require('./lib/gdrive');
 const slides = require('./lib/slides');
 const docedit = require('./lib/docedit');
 const nas = require('./lib/nas');
+const gmail = require('./lib/gmail');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -490,6 +491,70 @@ app.message(async ({ message, client }) => {
         });
         if (res && res.ok) await reply('일정을 수정했어요.');
         else await reply(`수정에 실패했어요: ${(res && res.error) || '알 수 없는 오류'}`);
+        return;
+      }
+
+      case 'mail_check':
+      case 'mail_read':
+      case 'mail_write':
+      case 'mail_send': {
+        // 위임 메일함은 관리자만, 설정(메일함·권한) 있어야 동작
+        if (user !== ADMIN) { await reply('메일 기능은 관리자만 사용할 수 있어요.'); return; }
+        if (!gmail.configured()) { await reply('메일 기능이 아직 설정 전이에요(관리자: 메일함 주소 + Gmail 권한 설정 필요).'); return; }
+
+        if (intent.type === 'mail_check') {
+          await setStatus('📬 메일함을 확인하고 있어요…');
+          const res = await gmail.listRecent({ query: data.query || 'in:inbox', max: 10 });
+          if (!res.ok) { console.error('메일 조회 실패:', res.error); await reply('메일을 불러오지 못했어요.'); return; }
+          const msgs = res.messages || [];
+          if (msgs.length === 0) { await reply('해당 조건의 메일이 없어요.'); return; }
+          session.setLast(user, 'mail', msgs);
+          const lines = msgs.map((m, i) => `${i + 1}. ${m.unread ? '🔵 ' : ''}${m.subject}\n    — ${m.from}`).join('\n');
+          await reply(`메일함 (${gmail.account()}) 최근 ${msgs.length}건:\n${lines}\n\n"N번 읽어줘"로 본문을 볼 수 있어요.`);
+          return;
+        }
+
+        if (intent.type === 'mail_read') {
+          const last = session.getLast(user);
+          const item = data.number && last && last.kind === 'mail' ? last.items[data.number - 1] : null;
+          if (!item) { await reply('먼저 "메일 확인해줘"로 목록을 본 뒤 번호를 말해주세요.'); return; }
+          await setStatus('📖 메일을 읽고 있어요…');
+          const res = await gmail.getMessage(item.id);
+          if (!res.ok) { await reply('메일을 읽지 못했어요.'); return; }
+          const m = res.message;
+          await reply(`✉️ ${m.subject}\n보낸사람: ${m.from}\n날짜: ${m.date}\n\n${m.body.slice(0, 3500)}`);
+          return;
+        }
+
+        if (intent.type === 'mail_write') {
+          await setStatus('✍️ 메일 초안을 작성하고 있어요…');
+          let orig = null;
+          if (data.number) {
+            const last = session.getLast(user);
+            const item = last && last.kind === 'mail' ? last.items[data.number - 1] : null;
+            if (item) { const r = await gmail.getMessage(item.id); if (r.ok) orig = r.message; }
+          }
+          const contextText = orig ? `[답장 대상 메일]\nFrom: ${orig.from}\nSubject: ${orig.subject}\n\n${orig.body}` : '';
+          const draft = await claude.buildEmail(data.instruction || text, { to: data.to, contextText }, facts, useOpus);
+          if (!draft) { await reply('메일 초안을 만들지 못했어요. 누구에게, 무슨 내용인지 조금 더 알려주세요.'); return; }
+          const to = draft.to || data.to || (orig && orig.from) || '';
+          session.setLast(user, 'mail_pending', [{ to, subject: draft.subject || '(제목 없음)', body: draft.body, inReplyTo: orig ? orig.messageId : undefined, references: orig ? orig.messageId : undefined }]);
+          await reply(`✉️ 메일 초안입니다 (아직 발송 안 함)\n받는사람: ${to || '[미정 — 누구에게 보낼지 알려주세요]'}\n제목: ${draft.subject || ''}\n\n${draft.body}\n\n보내려면 "메일 보내기 확인", 고칠 게 있으면 어떻게 바꿀지 말씀해 주세요.`);
+          return;
+        }
+
+        // mail_send: 직전 초안을 실제 발송
+        const last = session.getLast(user);
+        const d = last && last.kind === 'mail_pending' ? last.items[0] : null;
+        if (!d) { await reply('보낼 메일 초안이 없어요. 먼저 메일을 작성해 주세요.'); return; }
+        if (!d.to) { await reply('받는사람이 정해지지 않았어요. "○○에게 보내줘"처럼 알려주세요.'); return; }
+        await setStatus('📨 메일을 보내고 있어요…');
+        const sent = await gmail.sendMessage(d);
+        if (!sent.ok) { console.error('메일 발송 실패:', sent.error); await reply('메일 발송에 실패했어요. 잠시 후 다시 시도해 주세요.'); return; }
+        session.setLast(user, 'mail_pending', []); // 초안 소진
+        await reply(`✅ 메일을 보냈어요: ${d.to} — ${d.subject}`);
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[메일 발송: ${d.to} / ${d.subject}]`);
         return;
       }
 
