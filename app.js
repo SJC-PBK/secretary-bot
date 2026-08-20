@@ -13,6 +13,8 @@ const slides = require('./lib/slides');
 const docedit = require('./lib/docedit');
 const nas = require('./lib/nas');
 const gmail = require('./lib/gmail');
+const ocr = require('./lib/ocr');
+const contacts = require('./lib/contacts');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -101,13 +103,16 @@ async function readSharedTextFiles(files) {
     const mt = (f.mimetype || '').toLowerCase();
     const ft = (f.filetype || '').toLowerCase();
     const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
-    if (!isText) continue;
+    const isImg = ocr.isImage(mt, ft);
+    if (!isText && !isImg) continue;
     const url = f.url_private_download || f.url_private;
     if (!url) continue;
     try {
       const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) { console.error('첨부 다운로드 실패:', f.name, res.status); continue; }
-      let txt = decodeSmart(Buffer.from(await res.arrayBuffer()));
+      const buf = Buffer.from(await res.arrayBuffer());
+      let txt = isText ? decodeSmart(buf) : ocr.ocrBuffer(buf, f.name); // 이미지는 OCR
+      if (!txt) continue;
       if (txt.length > MAX_CHARS) txt = txt.slice(0, MAX_CHARS) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
     } catch (e) { console.error('첨부 읽기 오류:', f && f.name, e && e.message); }
@@ -132,10 +137,13 @@ async function readLinkedSlackFiles(text, client) {
       const mt = (f.mimetype || '').toLowerCase();
       const ft = (f.filetype || '').toLowerCase();
       const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
-      if (!isText) continue;
+      const isImg = ocr.isImage(mt, ft);
+      if (!isText && !isImg) continue;
       const res = await fetch(f.url_private_download || f.url_private, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) continue;
-      let txt = decodeSmart(Buffer.from(await res.arrayBuffer()));
+      const buf = Buffer.from(await res.arrayBuffer());
+      let txt = isText ? decodeSmart(buf) : ocr.ocrBuffer(buf, f.name);
+      if (!txt) continue;
       if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
     } catch (e) { console.error('링크 파일 읽기 오류:', id, e && e.message); }
@@ -606,6 +614,42 @@ app.message(async ({ message, client }) => {
         await reply(`✅ 메일을 보냈어요 (${d.account}): ${d.to} — ${d.subject}`);
         memory.append(user, 'user', text);
         memory.append(user, 'assistant', `[메일 발송: ${d.to} / ${d.subject}]`);
+        return;
+      }
+
+      case 'contact_save': {
+        if (!attachedText) { await reply('명함/연락처 이미지를 첨부하거나 링크로 주세요. (사진이 선명할수록 정확해요)'); return; }
+        await setStatus('🪪 명함에서 연락처를 정리하고 있어요…');
+        const c = await claude.extractContact(attachedText, useOpus);
+        const hasContact = c && (c.name || (c.mobiles && c.mobiles.length) || (c.phones && c.phones.length) || (c.emails && c.emails.length));
+        if (!hasContact) { await reply('명함에서 연락처를 읽어내지 못했어요. 더 선명한 사진으로 다시 시도해 주세요.'); return; }
+        const summary = [
+          `이름: ${c.name || '-'}`,
+          c.title ? `직함: ${c.title}` : null,
+          c.org ? `회사/기관: ${c.org}` : null,
+          (c.mobiles && c.mobiles.length) ? `휴대폰: ${c.mobiles.join(', ')}` : null,
+          (c.phones && c.phones.length) ? `전화: ${c.phones.join(', ')}` : null,
+          (c.emails && c.emails.length) ? `이메일: ${c.emails.join(', ')}` : null,
+          c.address ? `주소: ${c.address}` : null,
+        ].filter(Boolean).join('\n');
+        // vCard 파일 전송 (스레드)
+        try {
+          const vcf = contacts.buildVcf(c);
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secbot-vcf-'));
+          const fp = path.join(dir, (c.name || 'contact').replace(/[\\/:*?"<>|\n\r]/g, '').slice(0, 40) + '.vcf');
+          fs.writeFileSync(fp, vcf, 'utf8');
+          await client.files.uploadV2({ channel_id: message.channel, thread_ts: message.ts, file: fs.createReadStream(fp), filename: path.basename(fp), title: '명함 연락처', initial_comment: `🪪 명함에서 이렇게 읽었어요 (숫자·철자 확인해 주세요):\n${summary}\n\n아래 .vcf 파일을 휴대폰에서 열면 주소록에 추가됩니다.` });
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (e) { console.error('vCard 전송 오류:', e && e.message); await reply(`🪪 명함 정리 결과 (확인해 주세요):\n${summary}`); }
+        // 구글 주소록 저장 (요청 시)
+        if (data.save) {
+          if (!contacts.configured() || !email) { await reply('구글 주소록 저장은 설정이 필요해요(관리자: contacts 권한 + People API).'); return; }
+          const g = await contacts.saveGoogle(email, c);
+          if (g.ok) await reply('✅ 구글 주소록에도 저장했어요.');
+          else { console.error('구글 주소록 저장 실패:', g.error); await reply('구글 주소록 저장은 실패했어요(권한/People API 설정 확인 필요). 위 vCard 파일로는 바로 추가하실 수 있어요.'); }
+        }
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[명함 정리: ${c.name || ''}]`);
         return;
       }
 
