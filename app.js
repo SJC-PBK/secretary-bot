@@ -17,6 +17,7 @@ const ocr = require('./lib/ocr');
 const contacts = require('./lib/contacts');
 const gforms = require('./lib/gforms');
 const kakao = require('./lib/kakao');
+const canvas = require('./lib/canvas');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -797,6 +798,39 @@ app.message(async ({ message, client }) => {
         await reply(`✅ 만들었어요: ${res.name}\n${res.link}`);
         memory.append(user, 'user', text);
         memory.append(user, 'assistant', `[${kind === 'sheet' ? '구글시트' : '구글문서'} 생성: ${res.name}] ${res.link}`);
+        return;
+      }
+
+      case 'canvas_create': {
+        if (!canvas.configured()) { await reply('캔버스 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        const instruction = attachedText ? (text + '\n\n[첨부 내용]\n' + attachedText) : text;
+        await setStatus('🖽 캔버스를 만들고 있어요…');
+        const spec = await claude.buildCanvas(instruction, ctx, facts, useOpus);
+        if (!spec) { await reply('캔버스 내용을 만들지 못했어요. 무슨 내용으로 만들지 조금 더 알려주세요.'); return; }
+        const res = await canvas.create({ title: spec.title, markdown: spec.markdown });
+        if (!res.ok) { console.error('캔버스 생성 실패:', res.error); await reply('캔버스 생성에 실패했어요. 잠시 후 다시 시도해 주세요.'); return; }
+        session.setLast(user, 'canvas', [{ canvasId: res.canvasId, url: res.url, title: spec.title || '캔버스' }]);
+        await reply(`✅ 캔버스를 만들었어요: ${spec.title || '캔버스'}\n${res.url}\n\n"그 캔버스에 ○○ 추가해줘"라고 하면 이어서 갱신해요.`);
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[캔버스 생성: ${spec.title || ''}] ${res.url}`);
+        return;
+      }
+
+      case 'canvas_update': {
+        if (!canvas.configured()) { await reply('캔버스 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        const last = session.getLast(user);
+        const target = last && last.kind === 'canvas' ? last.items[0] : null;
+        if (!target) { await reply('먼저 "○○을 캔버스로 만들어줘"로 캔버스를 만든 뒤에 갱신할 수 있어요. (봇이 만든 캔버스만 수정 가능)'); return; }
+        await setStatus('✏️ 캔버스를 갱신하고 있어요…');
+        const spec = await claude.buildCanvas(data.instruction || text, ctx, facts, useOpus);
+        const md = spec && spec.markdown ? spec.markdown : (data.instruction || text);
+        const res = await canvas.append({ canvasId: target.canvasId, markdown: md });
+        if (!res.ok) {
+          console.error('캔버스 갱신 실패:', res.error);
+          await reply(res.error === 'restricted_action' ? '이 캔버스는 봇이 수정할 수 없어요(봇이 만든 캔버스만 가능).' : '캔버스 갱신에 실패했어요. 잠시 후 다시 시도해 주세요.');
+          return;
+        }
+        await reply(`✅ 캔버스를 갱신했어요: ${target.title}\n${target.url}`);
         return;
       }
 
