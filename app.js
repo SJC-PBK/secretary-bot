@@ -250,6 +250,9 @@ app.message(async ({ message, client }) => {
 
   let attachedText = await readSharedTextFiles(message.files); // 첨부된 텍스트 파일(전사본 등) 내용
   const editableDoc = findEditableDoc(message.files); // 첨부된 hwp/hwpx (수정 대상)
+  if (Array.isArray(message.files) && message.files.length) {
+    console.log('[첨부]', message.files.map((f) => `${f.name}(${f.mimetype}/${f.filetype})`).join(', '), '| 읽은 텍스트', attachedText.length, '자', editableDoc ? '| 편집대상 hwp' : '');
+  }
 
   // 슬랙 스레드로 hwpx 파일 전송(수정·채우기 결과 회신)
   const uploadHwpx = async (res, comment) => {
@@ -883,6 +886,12 @@ app.message(async ({ message, client }) => {
       } finally {
         docedit.cleanup(dl.dir);
       }
+    }
+
+    // 파일을 첨부했는데 텍스트로 읽지 못한 경우: 대화로 넘겨 헛답하지 말고 명확히 안내
+    if (Array.isArray(message.files) && message.files.length && !attachedText && !editableDoc) {
+      await reply(`첨부하신 파일(${message.files.map((f) => f.name).join(', ')})을 텍스트로 읽지 못했어요.\n오디오·이미지 파일은 자동 전사/판독을 지원하지 않아요. 회의록은 전사 텍스트(.txt)를 첨부하거나 내용을 붙여넣어 주시면 정리해 드립니다.`);
+      return;
     }
 
     await setStatus('⏳ 확인하고 있어요…');
