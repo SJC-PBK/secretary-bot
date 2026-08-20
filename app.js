@@ -15,6 +15,7 @@ const nas = require('./lib/nas');
 const gmail = require('./lib/gmail');
 const ocr = require('./lib/ocr');
 const contacts = require('./lib/contacts');
+const gforms = require('./lib/gforms');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -755,6 +756,23 @@ app.message(async ({ message, client }) => {
         await reply(`✅ 만들었어요: ${res.name}\n${res.link}`);
         memory.append(user, 'user', text);
         memory.append(user, 'assistant', `[${kind === 'sheet' ? '구글시트' : '구글문서'} 생성: ${res.name}] ${res.link}`);
+        return;
+      }
+
+      case 'form_create': {
+        if (!gforms.configured()) { await reply('설문지 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        if (!email) { await reply('드라이브 저장용 이메일이 등록되지 않았어요(관리자에게 문의).'); return; }
+        const instruction = attachedText ? (text + '\n\n[첨부 내용]\n' + attachedText) : text;
+        await setStatus('📝 설문 문항을 구성하고 있어요…');
+        const spec = await claude.buildFormSpec(instruction, ctx, facts, useOpus);
+        if (!spec) { await reply('설문 사양을 만들지 못했어요. 어떤 주제로, 무슨 질문을 넣을지 조금 더 알려주세요.'); return; }
+        await setStatus('📋 구글 설문지를 만들고 있어요…');
+        const res = await gforms.createForm({ userEmail: email, title: spec.title, description: spec.description, questions: spec.questions });
+        if (!res.ok) { console.error('설문 생성 실패:', res.error); await reply('설문지 생성에 실패했어요(권한/Forms API 설정 확인 필요).'); return; }
+        const respLine = res.responderUri ? `\n응답 링크(배포용): ${res.responderUri}` : '';
+        await reply(`✅ 설문지를 만들었어요: ${spec.title || '설문지'} (${(spec.questions || []).length}문항)\n편집: ${res.editUrl}${respLine}`);
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[구글 설문지 생성: ${spec.title || ''}] ${res.editUrl}`);
         return;
       }
 
