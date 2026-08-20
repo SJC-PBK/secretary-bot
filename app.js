@@ -400,7 +400,9 @@ app.message(async ({ message, client }) => {
       }
 
       case 'briefing': {
-        const text = await briefing.buildForUser({ userId: user, email, greeting: false });
+        let weather = '';
+        try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch {}
+        const text = await briefing.buildForUser({ userId: user, email, greeting: false, weather });
         await reply(text);
         return;
       }
@@ -1122,10 +1124,12 @@ async function onDue(reminder) {
 // 아침 브리핑: 등록된 각 사용자에게 오늘 일정·할일·알림 요약 DM
 async function onBriefing() {
   const reg = users.load();
+  let weather = '';
+  try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch (e) { console.error('브리핑 날씨 조회 실패:', e && e.message); }
   for (const userId of Object.keys(reg)) {
     try {
       const email = users.emailFor(userId);
-      const text = await briefing.buildForUser({ userId, email, greeting: true });
+      const text = await briefing.buildForUser({ userId, email, greeting: true, weather });
       if (text) await app.client.chat.postMessage({ channel: userId, text });
     } catch (e) {
       console.error('브리핑 발송 실패:', userId, e && e.message);
