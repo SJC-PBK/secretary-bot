@@ -115,6 +115,34 @@ async function readSharedTextFiles(files) {
   return parts.join('\n\n');
 }
 
+// 메시지 본문에 붙여넣은 슬랙 파일 링크/ID를 찾아 그 파일의 텍스트를 읽는다(첨부 대신 링크로 준 경우).
+async function readLinkedSlackFiles(text, client) {
+  if (!text) return '';
+  const ids = new Set();
+  const re = /\/files\/[^/]+\/(F[A-Z0-9]{6,})|(?:^|\s)(F[A-Z0-9]{8,})(?=\s|$)/g;
+  let m;
+  while ((m = re.exec(text))) ids.add(m[1] || m[2]);
+  if (!ids.size) return '';
+  const token = process.env.SLACK_BOT_TOKEN;
+  const parts = [];
+  for (const id of ids) {
+    try {
+      const info = await client.files.info({ file: id });
+      const f = info.file || {};
+      const mt = (f.mimetype || '').toLowerCase();
+      const ft = (f.filetype || '').toLowerCase();
+      const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
+      if (!isText) continue;
+      const res = await fetch(f.url_private_download || f.url_private, { headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) continue;
+      let txt = decodeSmart(Buffer.from(await res.arrayBuffer()));
+      if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…(이하 생략)';
+      parts.push(`# ${f.name}\n${txt}`);
+    } catch (e) { console.error('링크 파일 읽기 오류:', id, e && e.message); }
+  }
+  return parts.join('\n\n');
+}
+
 // 첨부 파일 중 편집 가능한 한글 문서(hwp/hwpx) 하나를 찾는다.
 function findEditableDoc(files) {
   if (!Array.isArray(files)) return null;
@@ -253,6 +281,11 @@ app.message(async ({ message, client }) => {
   if (Array.isArray(message.files) && message.files.length) {
     console.log('[첨부]', message.files.map((f) => `${f.name}(${f.mimetype}/${f.filetype})`).join(', '), '| 읽은 텍스트', attachedText.length, '자', editableDoc ? '| 편집대상 hwp' : '');
   }
+  // 파일 링크(URL)를 붙여넣은 경우: 그 파일도 읽어 합침
+  try {
+    const linkedText = await readLinkedSlackFiles(text, client);
+    if (linkedText) attachedText = attachedText ? (attachedText + '\n\n' + linkedText) : linkedText;
+  } catch (e) { console.error('링크 파일 처리 오류:', e && e.message); }
 
   // 슬랙 스레드로 hwpx 파일 전송(수정·채우기 결과 회신)
   const uploadHwpx = async (res, comment) => {
