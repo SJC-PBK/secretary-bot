@@ -807,7 +807,7 @@ app.message(async ({ message, client }) => {
         await setStatus('🖽 캔버스를 만들고 있어요…');
         const spec = await claude.buildCanvas(instruction, ctx, facts, useOpus);
         if (!spec) { await reply('캔버스 내용을 만들지 못했어요. 무슨 내용으로 만들지 조금 더 알려주세요.'); return; }
-        const res = await canvas.create({ title: spec.title, markdown: spec.markdown });
+        const res = await canvas.create({ title: spec.title, markdown: spec.markdown, shareUserIds: [user] });
         if (!res.ok) { console.error('캔버스 생성 실패:', res.error); await reply('캔버스 생성에 실패했어요. 잠시 후 다시 시도해 주세요.'); return; }
         session.setLast(user, 'canvas', [{ canvasId: res.canvasId, url: res.url, title: spec.title || '캔버스' }]);
         await reply(`✅ 캔버스를 만들었어요: ${spec.title || '캔버스'}\n${res.url}\n\n"그 캔버스에 ○○ 추가해줘"라고 하면 이어서 갱신해요.`);
