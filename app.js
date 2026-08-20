@@ -95,6 +95,26 @@ function decodeSmart(buf) {
   }
 }
 
+// HTML(슬랙 캔버스 등) → 대략적인 평문. 태그 제거·기본 엔티티 복원.
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function isSlackDoc(mimetype, filetype) {
+  const mt = (mimetype || '').toLowerCase();
+  const ft = (filetype || '').toLowerCase();
+  return mt.includes('slack-docs') || mt === 'text/html' || ft === 'quip' || ft === 'canvas';
+}
+
 // 첨부된 텍스트 파일(회의 전사본 등) 내용을 읽어 하나의 문자열로. 텍스트류만, 크기 제한.
 async function readSharedTextFiles(files) {
   if (!Array.isArray(files) || files.length === 0) return '';
@@ -106,14 +126,15 @@ async function readSharedTextFiles(files) {
     const ft = (f.filetype || '').toLowerCase();
     const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
     const isImg = ocr.isImage(mt, ft);
-    if (!isText && !isImg) continue;
+    const isDoc = isSlackDoc(mt, ft);
+    if (!isText && !isImg && !isDoc) continue;
     const url = f.url_private_download || f.url_private;
     if (!url) continue;
     try {
       const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) { console.error('첨부 다운로드 실패:', f.name, res.status); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isText ? decodeSmart(buf) : ocr.ocrBuffer(buf, f.name); // 이미지는 OCR
+      let txt = isImg ? ocr.ocrBuffer(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > MAX_CHARS) txt = txt.slice(0, MAX_CHARS) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
@@ -126,7 +147,7 @@ async function readSharedTextFiles(files) {
 async function readLinkedSlackFiles(text, client) {
   if (!text) return '';
   const ids = new Set();
-  const re = /\/files\/[^/]+\/(F[A-Z0-9]{6,})|(?:^|\s)(F[A-Z0-9]{8,})(?=\s|$)/g;
+  const re = /\/(?:files|docs)\/[^/]+\/(F[A-Z0-9]{6,})|(?:^|\s)(F[A-Z0-9]{8,})(?=\s|$)/g;
   let m;
   while ((m = re.exec(text))) ids.add(m[1] || m[2]);
   if (!ids.size) return '';
@@ -140,11 +161,12 @@ async function readLinkedSlackFiles(text, client) {
       const ft = (f.filetype || '').toLowerCase();
       const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
       const isImg = ocr.isImage(mt, ft);
-      if (!isText && !isImg) continue;
+      const isDoc = isSlackDoc(mt, ft);
+      if (!isText && !isImg && !isDoc) continue;
       const res = await fetch(f.url_private_download || f.url_private, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) continue;
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isText ? decodeSmart(buf) : ocr.ocrBuffer(buf, f.name);
+      let txt = isImg ? ocr.ocrBuffer(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
