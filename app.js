@@ -16,6 +16,7 @@ const gmail = require('./lib/gmail');
 const ocr = require('./lib/ocr');
 const contacts = require('./lib/contacts');
 const gforms = require('./lib/gforms');
+const kakao = require('./lib/kakao');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -354,6 +355,24 @@ app.message(async ({ message, client }) => {
         }
         const ok = reminders.cancel(user, target.id);
         await reply(ok ? '취소했어요.' : '취소하지 못했어요.');
+        return;
+      }
+
+      case 'travel_time': {
+        if (!kakao.configured()) { await reply('길찾기 기능이 아직 설정 전이에요(관리자: 카카오 키 설정 필요).'); return; }
+        if (!data.destination) { await reply('어디까지 가는 경로인가요? 목적지를 알려주세요.'); return; }
+        const origin = data.origin || process.env.SECBOT_DEFAULT_ORIGIN;
+        if (!origin) { await reply('출발지를 알려주세요. (기본 출발지를 정해두면 목적지만 말해도 돼요)'); return; }
+        await setStatus('🚗 경로를 계산하고 있어요…');
+        const res = await kakao.travelTime(origin, data.destination);
+        if (!res.ok) {
+          const msg = res.error === 'origin_not_found' ? `출발지 "${origin}"를 못 찾았어요.`
+            : res.error === 'dest_not_found' ? `목적지 "${data.destination}"를 못 찾았어요.`
+            : '경로를 계산하지 못했어요. 잠시 후 다시 시도해 주세요.';
+          await reply(msg);
+          return;
+        }
+        await reply(`🚗 ${res.origin.name} → ${res.dest.name}\n예상 소요시간: 약 ${res.durationMin}분 (${res.distanceKm}km, 자동차·실시간 교통 반영)`);
         return;
       }
 
