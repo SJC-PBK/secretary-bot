@@ -163,7 +163,17 @@ app.message(async ({ message, client }) => {
       users.addPending(message.user, { email, name });
       await client.chat.postMessage({ channel: message.user, text: '사용 승인 대기 중입니다. 관리자 승인 후 이용하실 수 있어요.' });
       if (ADMIN) {
-        await client.chat.postMessage({ channel: ADMIN, text: `🔔 비서봇 사용 요청: ${name}${email ? ' (' + email + ')' : ''}\n승인하려면: 승인 ${message.user}` });
+        await client.chat.postMessage({
+          channel: ADMIN,
+          text: `🔔 비서봇 사용 요청: ${name}${email ? ' (' + email + ')' : ''}`, // 알림/폴백용
+          blocks: [
+            { type: 'section', text: { type: 'mrkdwn', text: `:bell: *비서봇 사용 요청*\n${name}${email ? ` (${email})` : ''}` } },
+            { type: 'actions', elements: [
+              { type: 'button', text: { type: 'plain_text', text: '✅ 승인' }, style: 'primary', action_id: 'approve_user', value: message.user },
+              { type: 'button', text: { type: 'plain_text', text: '❌ 거절' }, style: 'danger', action_id: 'reject_user', value: message.user },
+            ] },
+          ],
+        });
       }
     } catch (e) { console.error('온보딩 오류:', e && e.message); }
     return;
@@ -174,14 +184,16 @@ app.message(async ({ message, client }) => {
   if (message.user === ADMIN) {
     const t = (message.text || '').trim();
     const approveM = t.match(/(?:^|\s)승인\s+(U[A-Z0-9]{6,})(?:\s|$)/);
+    const approveNumM = t.match(/^승인\s+(\d+)$/); // "승인 1" 번호 승인(모바일 편의)
     const removeM = t.match(/(?:^|\s)(?:해제|삭제|제거)\s+(U[A-Z0-9]{6,})(?:\s|$)/);
     // 공백 제거 + 뒤쪽 조사/맺음말 제거 후 표준형과 비교
     const core = t.replace(/\s+/g, '').replace(/(?:알려줘|알려|보여줘|보여|해줘|해주세요|주세요|봐줘|봐|확인해줘|확인|리스트|좀|을|를|은|는|줘|요|해)+$/, '');
     const USERLIST = ['사용자목록', '사용자명단', '사용자리스트', '등록사용자', '등록된사용자', '등록사용자목록', '등록된사용자목록', '유저목록', '회원목록', '가입자목록', '전체사용자', '사용자현황'];
     const PENDLIST = ['승인목록', '승인대기', '승인대기목록', '대기목록', '대기자목록', '승인요청', '승인요청목록'];
 
-    if (approveM) {
-      const target = approveM[1];
+    if (approveM || approveNumM) {
+      const target = approveM ? approveM[1] : Object.keys(users.pendingList())[Number(approveNumM[1]) - 1];
+      if (!target) { await client.chat.postMessage({ channel: message.user, text: '그 번호의 요청이 없어요. ("승인 목록"으로 확인)' }); return; }
       const p = users.pendingList();
       if (!p[target]) { await client.chat.postMessage({ channel: message.user, text: '그 요청을 찾지 못했어요. ("승인 목록"으로 확인)' }); return; }
       users.register(target, p[target].email || '');
@@ -201,7 +213,7 @@ app.message(async ({ message, client }) => {
     }
     if (PENDLIST.includes(core)) {
       const p = users.pendingList(); const ids = Object.keys(p);
-      await client.chat.postMessage({ channel: message.user, text: ids.length ? ids.map((id) => `- ${p[id].name || id} ${p[id].email || ''} → 승인 ${id}`).join('\n') : '대기 중인 요청이 없어요.' });
+      await client.chat.postMessage({ channel: message.user, text: ids.length ? '대기 중인 요청:\n' + ids.map((id, i) => `${i + 1}. ${p[id].name || id} ${p[id].email || ''}`).join('\n') + '\n\n승인은 요청 알림의 "✅ 승인" 버튼을 누르거나 "승인 <번호>"라고 하세요.' : '대기 중인 요청이 없어요.' });
       return;
     }
     if (USERLIST.includes(core)) {
@@ -885,6 +897,39 @@ app.message(async ({ message, client }) => {
   } finally {
     await clearStatus();
   }
+});
+
+// 승인 요청 버튼: ✅ 승인 (관리자만)
+app.action('approve_user', async ({ ack, body, client, action }) => {
+  await ack();
+  const ADMIN = process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID;
+  if (body.user.id !== ADMIN) return;
+  const target = action.value;
+  try {
+    const p = users.pendingList();
+    if (!p[target]) {
+      await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: '이미 처리된 요청이에요.', blocks: [] });
+      return;
+    }
+    users.register(target, p[target].email || '');
+    users.removePending(target);
+    await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: `✅ 승인 완료: ${p[target].name || target}${p[target].email ? ` (${p[target].email})` : ''}`, blocks: [] });
+    try { await client.chat.postMessage({ channel: target, text: '사용 승인되었습니다! 이제 저에게 편하게 말 걸어보세요 🙂' }); } catch {}
+  } catch (e) { console.error('승인 버튼 오류:', e && e.message); }
+});
+
+// 승인 요청 버튼: ❌ 거절 (관리자만)
+app.action('reject_user', async ({ ack, body, client, action }) => {
+  await ack();
+  const ADMIN = process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID;
+  if (body.user.id !== ADMIN) return;
+  const target = action.value;
+  try {
+    const p = users.pendingList();
+    const name = p[target] ? (p[target].name || target) : target;
+    users.removePending(target);
+    await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: `❌ 요청 거절: ${name}`, blocks: [] });
+  } catch (e) { console.error('거절 버튼 오류:', e && e.message); }
 });
 
 // 리마인더 발송: 해당 사용자 DM으로 전송
