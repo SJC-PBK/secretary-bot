@@ -118,6 +118,22 @@ function isSlackDoc(mimetype, filetype) {
   return mt.includes('slack-docs') || mt === 'text/html' || ft === 'quip' || ft === 'canvas';
 }
 
+// 이미지 이해: OCR로 글자를 뽑고(있으면), claude가 이미지를 시각적으로 보고 내용을 설명해 합친다.
+// 글자 없는 사진(물건·상황 등)도 이해할 수 있게 한다.
+async function imageUnderstand(buf, name) {
+  let txt = ocr.ocrBuffer(buf, name) || '';
+  let tdir = null;
+  try {
+    tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'secbot-img-'));
+    const ip = path.join(tdir, (name || 'image').replace(/[\\/]/g, '_'));
+    fs.writeFileSync(ip, buf);
+    const desc = await claude.vision(ip, '이 이미지에 무엇이 담겨 있는지 구체적으로 설명해. 물건이면 종류·용도·특징, 문서·화면이면 핵심 내용, 상황·사람·장소면 그 정황을 사실 그대로.');
+    if (desc) txt = (txt ? txt + '\n' : '') + '[이미지 설명] ' + desc.trim();
+  } catch (e) { console.error('이미지 시각이해 오류:', e && e.message); }
+  finally { if (tdir) try { fs.rmSync(tdir, { recursive: true, force: true }); } catch {} }
+  return txt;
+}
+
 // 첨부된 텍스트 파일(회의 전사본 등) 내용을 읽어 하나의 문자열로. 텍스트류만, 크기 제한.
 async function readSharedTextFiles(files) {
   if (!Array.isArray(files) || files.length === 0) return '';
@@ -137,7 +153,7 @@ async function readSharedTextFiles(files) {
       const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) { console.error('첨부 다운로드 실패:', f.name, res.status); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isImg ? ocr.ocrBuffer(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
+      let txt = isImg ? await imageUnderstand(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > MAX_CHARS) txt = txt.slice(0, MAX_CHARS) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
@@ -169,7 +185,7 @@ async function readLinkedSlackFiles(text, client) {
       const res = await fetch(f.url_private_download || f.url_private, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) continue;
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isImg ? ocr.ocrBuffer(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
+      let txt = isImg ? await imageUnderstand(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
@@ -315,7 +331,7 @@ app.message(async ({ message, client }) => {
   const editableDoc = findEditableDoc(message.files); // 첨부된 hwp/hwpx (수정 대상)
   const audioFile = (message.files || []).find((f) => stt.isAudio(f.mimetype, f.filetype)); // 첨부된 음성 파일(전사 대상)
   if (Array.isArray(message.files) && message.files.length) {
-    console.log('[첨부]', message.files.map((f) => `${f.name}(${f.mimetype}/${f.filetype})`).join(', '), '| 읽은 텍스트', attachedText.length, '자', editableDoc ? '| 편집대상 hwp' : '');
+    console.log('[첨부]', message.files.map((f) => `${f.name}[${f.id}](${f.mimetype}/${f.filetype})`).join(', '), '| 읽은 텍스트', attachedText.length, '자', editableDoc ? '| 편집대상 hwp' : '');
   }
   // 파일 링크(URL)를 붙여넣은 경우: 그 파일도 읽어 합침
   try {
