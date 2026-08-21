@@ -17,6 +17,7 @@ const ocr = require('./lib/ocr');
 const contacts = require('./lib/contacts');
 const gforms = require('./lib/gforms');
 const kakao = require('./lib/kakao');
+const transit = require('./lib/transit');
 const canvas = require('./lib/canvas');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
@@ -382,20 +383,26 @@ app.message(async ({ message, client }) => {
       }
 
       case 'travel_time': {
-        if (!kakao.configured()) { await reply('길찾기 기능이 아직 설정 전이에요(관리자: 카카오 키 설정 필요).'); return; }
         if (!data.destination) { await reply('어디까지 가는 경로인가요? 목적지를 알려주세요.'); return; }
         const origin = data.origin || process.env.SECBOT_DEFAULT_ORIGIN;
         if (!origin) { await reply('출발지를 알려주세요. (기본 출발지를 정해두면 목적지만 말해도 돼요)'); return; }
-        await setStatus('🚗 경로를 계산하고 있어요…');
-        const res = await kakao.travelTime(origin, data.destination);
-        if (!res.ok) {
-          const msg = res.error === 'origin_not_found' ? `출발지 "${origin}"를 못 찾았어요.`
-            : res.error === 'dest_not_found' ? `목적지 "${data.destination}"를 못 찾았어요.`
-            : '경로를 계산하지 못했어요. 잠시 후 다시 시도해 주세요.';
-          await reply(msg);
+        const mode = data.mode === 'car' ? 'car' : 'transit'; // 기본 대중교통
+        const notFound = (res) => res.error === 'origin_not_found' ? `출발지 "${origin}"를 못 찾았어요.` : res.error === 'dest_not_found' ? `목적지 "${data.destination}"를 못 찾았어요.` : null;
+
+        if (mode === 'transit') {
+          if (!transit.configured()) { await reply('대중교통 길찾기가 아직 설정 전이에요(관리자 설정 필요).'); return; }
+          await setStatus('🚌 대중교통 경로를 계산하고 있어요…');
+          const res = await transit.transitTime(origin, data.destination);
+          if (!res.ok) { await reply(notFound(res) || '대중교통 경로를 찾지 못했어요(경로가 없거나 먼 거리일 수 있어요). "자동차로"라고 하면 자동차 기준으로 알려드려요.'); return; }
+          await reply(`🚌 ${res.origin.name} → ${res.dest.name}\n대중교통 예상: 약 ${res.totalMin}분 (환승 ${res.transfers}회, 요금 ${res.payment.toLocaleString()}원)`);
           return;
         }
-        await reply(`🚗 ${res.origin.name} → ${res.dest.name}\n예상 소요시간: 약 ${res.durationMin}분 (${res.distanceKm}km, 자동차·실시간 교통 반영)`);
+
+        if (!kakao.configured()) { await reply('길찾기 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        await setStatus('🚗 자동차 경로를 계산하고 있어요…');
+        const res = await kakao.travelTime(origin, data.destination);
+        if (!res.ok) { await reply(notFound(res) || '경로를 계산하지 못했어요. 잠시 후 다시 시도해 주세요.'); return; }
+        await reply(`🚗 ${res.origin.name} → ${res.dest.name}\n자동차 예상: 약 ${res.durationMin}분 (${res.distanceKm}km, 실시간 교통 반영)`);
         return;
       }
 
