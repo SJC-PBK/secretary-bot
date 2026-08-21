@@ -27,6 +27,8 @@ const reminders = require('./lib/reminders');
 const todos = require('./lib/todos');
 const scheduler = require('./lib/scheduler');
 const briefing = require('./lib/briefing');
+const admins = require('./lib/admins');
+const serverstat = require('./lib/serverstat');
 const profile = require('./lib/profile');
 const session = require('./lib/session');
 const calendar = require('./lib/calendar');
@@ -430,7 +432,15 @@ app.message(async ({ message, client }) => {
       case 'briefing': {
         let weather = '';
         try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch {}
-        const text = await briefing.buildForUser({ userId: user, email, greeting: false, weather });
+        let text = await briefing.buildForUser({ userId: user, email, greeting: false, weather });
+        // 관리자 그룹에게만 서버 상태 + 토큰 사용량 리포트 추가(온디맨드 — 즉시 최신 집계)
+        if (admins.isAdmin(email)) {
+          await setStatus('📊 토큰 사용량을 집계하고 있어요…');
+          try {
+            const stats = await serverstat.saveTokenStats();
+            text += '\n\n' + serverstat.formatReport(serverstat.serverStatus(), stats);
+          } catch (e) { console.error('관리자 리포트 생성 실패:', e && e.message); }
+        }
         await reply(text);
         return;
       }
@@ -1210,10 +1220,15 @@ async function onBriefing() {
   const reg = users.load();
   let weather = '';
   try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch (e) { console.error('브리핑 날씨 조회 실패:', e && e.message); }
+  // 토큰 통계 저장(하루 1회) + 서버 상태 스냅샷 — 관리자 리포트용
+  let stats = null;
+  let server = null;
+  try { stats = await serverstat.saveTokenStats(); server = serverstat.serverStatus(); } catch (e) { console.error('관리자 리포트 준비 실패:', e && e.message); }
   for (const userId of Object.keys(reg)) {
     try {
       const email = users.emailFor(userId);
-      const text = await briefing.buildForUser({ userId, email, greeting: true, weather });
+      let text = await briefing.buildForUser({ userId, email, greeting: true, weather });
+      if (text && server && admins.isAdmin(email)) text += '\n\n' + serverstat.formatReport(server, stats || {});
       if (text) await app.client.chat.postMessage({ channel: userId, text });
     } catch (e) {
       console.error('브리핑 발송 실패:', userId, e && e.message);
