@@ -384,8 +384,11 @@ app.message(async ({ message, client }) => {
 
       case 'travel_time': {
         if (!data.destination) { await reply('어디까지 가는 경로인가요? 목적지를 알려주세요.'); return; }
-        const origin = data.origin || process.env.SECBOT_DEFAULT_ORIGIN;
-        if (!origin) { await reply('출발지를 알려주세요. (기본 출발지를 정해두면 목적지만 말해도 돼요)'); return; }
+        // "센터/회사/사무실/여기" 또는 미지정 → 기본 출발지(센터 주소) 사용
+        const originRaw = (data.origin || '').trim();
+        const isHere = !originRaw || /^(우리\s*)?(센터|회사|사무실|사무소|여기|직장)$/.test(originRaw);
+        const origin = isHere ? (process.env.SECBOT_DEFAULT_ORIGIN || originRaw) : originRaw;
+        if (!origin) { await reply('출발지를 알려주세요. (기본 출발지 미설정 — 관리자에게 센터 주소 등록을 요청하세요)'); return; }
         const mode = data.mode === 'car' ? 'car' : 'transit'; // 기본 대중교통
         const notFound = (res) => res.error === 'origin_not_found' ? `출발지 "${origin}"를 못 찾았어요.` : res.error === 'dest_not_found' ? `목적지 "${data.destination}"를 못 찾았어요.` : null;
 
