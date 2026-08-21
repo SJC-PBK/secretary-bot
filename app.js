@@ -18,6 +18,7 @@ const contacts = require('./lib/contacts');
 const gforms = require('./lib/gforms');
 const kakao = require('./lib/kakao');
 const transit = require('./lib/transit');
+const stt = require('./lib/stt');
 const canvas = require('./lib/canvas');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
@@ -312,6 +313,7 @@ app.message(async ({ message, client }) => {
 
   let attachedText = await readSharedTextFiles(message.files); // 첨부된 텍스트 파일(전사본 등) 내용
   const editableDoc = findEditableDoc(message.files); // 첨부된 hwp/hwpx (수정 대상)
+  const audioFile = (message.files || []).find((f) => stt.isAudio(f.mimetype, f.filetype)); // 첨부된 음성 파일(전사 대상)
   if (Array.isArray(message.files) && message.files.length) {
     console.log('[첨부]', message.files.map((f) => `${f.name}(${f.mimetype}/${f.filetype})`).join(', '), '| 읽은 텍스트', attachedText.length, '자', editableDoc ? '| 편집대상 hwp' : '');
   }
@@ -1070,9 +1072,17 @@ app.message(async ({ message, client }) => {
       }
     }
 
+    // 첨부된 음성 파일: 즉시 접수 안내 후 백그라운드로 전사 + 회의록 정리 → 완료되면 스레드로 전달
+    if (audioFile) {
+      if (!stt.available()) { await reply('음성→텍스트 변환 기능이 아직 준비되지 않았어요(관리자 설정 필요).'); return; }
+      await reply(`🎧 음성 파일(${audioFile.name})을 받았어요. 텍스트 변환과 회의록 정리는 시간이 걸립니다(분량에 비례, 길면 수십 분). 완료되면 이 스레드로 알려드릴게요. 🙌`);
+      processAudioJob({ channel: message.channel, threadTs: message.ts, file: audioFile, useOpus }); // fire-and-forget
+      return;
+    }
+
     // 파일을 첨부했는데 텍스트로 읽지 못한 경우: 대화로 넘겨 헛답하지 말고 명확히 안내
     if (Array.isArray(message.files) && message.files.length && !attachedText && !editableDoc) {
-      await reply(`첨부하신 파일(${message.files.map((f) => f.name).join(', ')})을 텍스트로 읽지 못했어요.\n오디오·이미지 파일은 자동 전사/판독을 지원하지 않아요. 회의록은 전사 텍스트(.txt)를 첨부하거나 내용을 붙여넣어 주시면 정리해 드립니다.`);
+      await reply(`첨부하신 파일(${message.files.map((f) => f.name).join(', ')})을 텍스트로 읽지 못했어요.\n텍스트(.txt)로 첨부하거나 내용을 붙여넣어 주시면 정리해 드립니다.`);
       return;
     }
 
@@ -1124,6 +1134,54 @@ app.action('reject_user', async ({ ack, body, client, action }) => {
 });
 
 // 리마인더 발송: 해당 사용자 DM으로 전송
+// 음성 첨부 백그라운드 처리: 다운로드 → 전사(whisper) → 회의록 정리 → 스레드로 전달
+async function processAudioJob({ channel, threadTs, file, useOpus }) {
+  const post = (t) => app.client.chat.postMessage({ channel, thread_ts: threadTs, text: t }).catch(() => {});
+  let dl = null;
+  try {
+    dl = await downloadBinaryFile(file);
+    if (!dl) { await post('음성 파일을 내려받지 못했어요. 다시 시도해 주세요.'); return; }
+    const r = await stt.transcribe(dl.path);
+    if (!r.ok) {
+      console.error('STT 실패:', r.error);
+      await post('음성 변환에 실패했어요. (지원하지 않는 형식이거나 손상된 파일일 수 있어요)');
+      return;
+    }
+    const transcript = r.text;
+    let minutes = '';
+    try {
+      minutes = await claude.ask(
+        transcript + '\n\n[지시] 위는 회의 음성을 자동 전사한 내용이야. 이를 한국어 개조식 회의록으로 정리해줘(안건·논의·결정사항·실행항목(담당·기한) 중심, 미상 항목은 생략). 전사 오류로 보이는 표현은 문맥에 맞게 자연스럽게 다듬어줘.',
+        [], [], useOpus
+      );
+    } catch (e) { console.error('회의록 정리 오류:', e && e.message); }
+    const comment = (minutes && minutes.trim())
+      ? ('✅ 음성 변환·회의록 정리 완료!\n\n【회의록】\n' + minutes.trim() + '\n\n(원문 전사본은 첨부파일 참고)')
+      : '✅ 음성 변환 완료. 회의록 자동정리는 실패해 전사 원문만 첨부했어요.';
+    let tdir = null;
+    try {
+      tdir = fs.mkdtempSync(path.join(os.tmpdir(), 'secbot-tr-'));
+      const tp = path.join(tdir, '전사본.txt');
+      fs.writeFileSync(tp, transcript, 'utf8');
+      await app.client.files.uploadV2({
+        channel_id: channel, thread_ts: threadTs,
+        file: fs.createReadStream(tp), filename: '전사본.txt', title: '음성 전사본',
+        initial_comment: comment,
+      });
+    } catch (e) {
+      console.error('전사본 업로드 오류:', e && e.message);
+      await post(comment + (minutes && minutes.trim() ? '' : '\n\n' + transcript.slice(0, 3000)));
+    } finally {
+      if (tdir) try { fs.rmSync(tdir, { recursive: true, force: true }); } catch {}
+    }
+  } catch (e) {
+    console.error('오디오 작업 오류:', e && e.message);
+    await post('음성 처리 중 오류가 났어요. 잠시 후 다시 시도해 주세요.');
+  } finally {
+    if (dl) try { fs.rmSync(dl.dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 async function onDue(reminder) {
   await app.client.chat.postMessage({
     channel: reminder.userId,
