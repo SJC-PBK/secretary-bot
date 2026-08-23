@@ -30,6 +30,8 @@ const briefing = require('./lib/briefing');
 const admins = require('./lib/admins');
 const serverstat = require('./lib/serverstat');
 const profile = require('./lib/profile');
+const persona = require('./lib/persona');
+const memdoc = require('./lib/memdoc');
 const session = require('./lib/session');
 const calendar = require('./lib/calendar');
 
@@ -280,7 +282,7 @@ app.message(async ({ message, client }) => {
       users.register(target, p[target].email || '');
       users.removePending(target);
       await client.chat.postMessage({ channel: message.user, text: `승인 완료: ${p[target].name || target} (${p[target].email || '이메일 없음'})` });
-      try { await client.chat.postMessage({ channel: target, text: '사용 승인되었습니다! 이제 저에게 편하게 말 걸어보세요 🙂' }); } catch {}
+      await onUserApproved(client, target, p[target].email || '');
       return;
     }
     if (removeM) {
@@ -792,6 +794,31 @@ app.message(async ({ message, client }) => {
         return;
       }
 
+      case 'memdoc_open': {
+        if (!gdrive.configured()) { await reply('구글 드라이브 연동이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        if (!email) { await reply('드라이브 저장용 이메일이 등록되지 않았어요(관리자에게 문의).'); return; }
+        await setStatus('🗂️ 내 기억 문서를 준비하고 있어요…');
+        const res = await memdoc.refresh(user, email);
+        if (!res.ok) { console.error('memdoc_open 실패:', res.error); await reply('내 기억 문서를 준비하지 못했어요. 잠시 후 다시 시도해 주세요.'); return; }
+        await reply(`🗂️ 내 기억 문서예요 (내 드라이브에만 있어 나만 볼 수 있어요):\n${res.link}\n\n① 페르소나(응대 지침) ② 장기기억(프로필 사실)을 고친 뒤 "내 기억 문서 반영해줘"라고 하면 서버에 저장돼요. ③ 최근 대화 메모리는 보기 전용입니다.`);
+        return;
+      }
+
+      case 'memdoc_sync': {
+        if (!gdrive.configured() || !email) { await reply('구글 드라이브 연동/이메일 설정이 필요해요.'); return; }
+        await setStatus('🔄 문서 수정 내용을 서버에 반영하고 있어요…');
+        const res = await memdoc.syncBack(user, email);
+        if (!res.ok) {
+          if (res.error === 'no_doc') { await reply('먼저 "내 기억 문서 만들어줘"로 문서를 만든 뒤 수정해 주세요.'); return; }
+          if (res.error === 'markers') { await reply('문서의 구분선(### 페르소나 / ### 장기기억 …)이 지워져서 반영하지 못했어요. "내 기억 문서 갱신해줘"로 서식을 복구한 뒤 다시 시도해 주세요.'); return; }
+          console.error('memdoc_sync 실패:', res.error);
+          await reply('반영에 실패했어요. 잠시 후 다시 시도해 주세요.');
+          return;
+        }
+        await reply(`✅ 반영했어요. 페르소나 ${res.personaSet ? '설정됨' : '없음'}, 장기기억 ${res.factsCount}건 저장. (문서도 최신 형식으로 정리했어요)`);
+        return;
+      }
+
       case 'document_create': {
         const instruction = attachedText ? (text + '\n\n[첨부 파일 내용]\n' + attachedText) : text; // 첨부 텍스트가 있으면 함께 전달
         await setStatus('📝 문서 내용을 구성하고 있어요…');
@@ -1051,7 +1078,7 @@ app.message(async ({ message, client }) => {
       default: {
         const q = (data.text || text) + (attachedText ? '\n\n[첨부 파일 내용]\n' + attachedText : '');
         await setStatus('⏳ 답변을 작성하고 있어요…');
-        const ans = await claude.ask(q, ctx, facts, useOpus);
+        const ans = await claude.ask(q, ctx, facts, useOpus, persona.get(user));
         if (ans === null) {
           await reply('지금 답변 생성에 문제가 있어요. 잠시 후 다시 시도해 주세요.');
           return;
@@ -1161,7 +1188,7 @@ app.action('approve_user', async ({ ack, body, client, action }) => {
     users.register(target, p[target].email || '');
     users.removePending(target);
     await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: `✅ 승인 완료: ${p[target].name || target}${p[target].email ? ` (${p[target].email})` : ''}`, blocks: [] });
-    try { await client.chat.postMessage({ channel: target, text: '사용 승인되었습니다! 이제 저에게 편하게 말 걸어보세요 🙂' }); } catch {}
+    await onUserApproved(client, target, p[target].email || '');
   } catch (e) { console.error('승인 버튼 오류:', e && e.message); }
 });
 
@@ -1226,6 +1253,18 @@ async function processAudioJob({ channel, threadTs, file, useOpus }) {
   } finally {
     if (dl) try { fs.rmSync(dl.dir, { recursive: true, force: true }); } catch {}
   }
+}
+
+// 승인 직후: 환영 DM + 개인 기억 문서(페르소나·장기기억·최근 메모리) 생성 안내
+async function onUserApproved(client, target, email) {
+  try { await client.chat.postMessage({ channel: target, text: '사용 승인되었습니다! 이제 저에게 편하게 말 걸어보세요 🙂' }); } catch {}
+  if (!gdrive.configured() || !email) return;
+  try {
+    const res = await memdoc.refresh(target, email);
+    if (res.ok) {
+      await client.chat.postMessage({ channel: target, text: `🗂️ 개인 "기억 문서"를 만들어 뒀어요 (내 구글 드라이브에만 있어 나만 볼 수 있어요):\n${res.link}\n\n여기서 ①페르소나(응대 지침) ②장기기억(프로필 사실)을 보고 직접 고칠 수 있어요. 고친 뒤 "내 기억 문서 반영해줘"라고 하면 저장됩니다. ③ 최근 대화 메모리는 보기 전용이에요.` });
+    }
+  } catch (e) { console.error('승인 후 기억문서 생성 실패:', e && e.message); }
 }
 
 async function onDue(reminder) {
