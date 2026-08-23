@@ -461,6 +461,26 @@ app.message(async ({ message, client }) => {
         return;
       }
 
+      case 'todo_move': {
+        const n = todos.list(user).length;
+        if (n === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
+        if (!Number.isInteger(data.from) || !Number.isInteger(data.to)) { await reply('몇 번을 몇 번으로 옮길까요? (예: "14번을 6번으로 옮겨줘")'); return; }
+        const moved = todos.move(user, data.from, data.to);
+        if (!moved) { await reply(`옮기지 못했어요. 목록은 1~${n}번까지예요.`); return; }
+        const items = todos.list(user);
+        await reply(`${data.from}번을 ${data.to}번으로 옮겼어요.\n\n할 일 목록:\n` + items.map((t, i) => { const dl = todos.dueLabel(t.due); return `${i + 1}. ${t.text}${dl ? ` (${dl})` : ''}`; }).join('\n'));
+        return;
+      }
+
+      case 'todo_edit': {
+        if (todos.list(user).length === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
+        if (!data.text) { await reply('어떤 내용으로 바꿀까요?'); return; }
+        const res = todos.edit(user, { number: data.number, match: data.match, text: data.text });
+        if (!res) { await reply('바꿀 항목을 찾지 못했어요. 번호나 기존 문구로 알려주세요.'); return; }
+        await reply(`수정했어요: "${res.old}" → "${res.text}"`);
+        return;
+      }
+
       case 'action_items_extract': {
         const source = attachedText ? (text + '\n\n[첨부 내용]\n' + attachedText) : text;
         await setStatus('📝 회의 내용에서 할 일을 뽑고 있어요…');
