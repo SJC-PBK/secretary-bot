@@ -15,13 +15,13 @@
       "backend": "Node.js + Slack Bolt (Socket Mode)",
       "database": "파일 기반 JSON",
       "styling": "없음",
-      "deploy": "사무실 서버 scv(192.168.0.97) systemd secretary-bot.service (claudebot 계정)"
+      "deploy": "사무실 서버 scv(192.168.x.x) systemd secretary-bot.service (claudebot 계정)"
     },
     "known_constraints": [
       "엔진=헤드리스 Claude(claude -p). 서버 인증=CLAUDE_CODE_OAUTH_TOKEN(claudebot 구독, CC봇과 공유). 비용 0",
       "Windows에선 claude.js spawn에 shell:true 필요(ER-001). 리눅스 서버는 shell:false",
       "v2 캘린더는 GAS 웹앱 경유(내 기본 캘린더). 봇은 구글 자격증명 미보유, GAS_WEBHOOK_URL+GAS_SHARED_SECRET만",
-      "서버(scv)는 사내망 전용(192.168.0.97) — 클로드 리모트/클라우드에서 접근 불가. 배포·테스트는 사무실 PC(LAN)에서만",
+      "서버(scv)는 사내망 전용(192.168.x.x) — 클로드 리모트/클라우드에서 접근 불가. 배포·테스트는 사무실 PC(LAN)에서만",
       "v2 코드는 문법+독립 코드검증만 — 런타임(캘린더 CRUD·장기기억) 미검증"
     ],
     "diagnostic": null

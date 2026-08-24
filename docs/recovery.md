@@ -2,7 +2,7 @@
 
 두 대가 서로 **독립**이다. 각각 복구법이 다르다.
 
-- **서버(scv, 192.168.0.97)** = 봇 본체가 도는 곳. 여기가 죽으면 봇이 멈춘다.
+- **서버(scv, 192.168.x.x)** = 봇 본체가 도는 곳. 여기가 죽으면 봇이 멈춘다.
 - **이 Windows PC** = 개발·폰 제어(remote-control)용. 여기가 죽어도 **봇은 계속 돈다**(서버에 있으므로).
 
 ---
@@ -13,7 +13,7 @@
 
 **확인(재부팅 후 1분 내):**
 ```
-ssh pbk@192.168.0.97
+ssh pbk@192.168.x.x
 sudo systemctl status secretary-bot      # active (running) 이어야 함
 sudo journalctl -u secretary-bot -n 15   # "Now connected to Slack" 확인
 ```

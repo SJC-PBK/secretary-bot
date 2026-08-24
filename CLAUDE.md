@@ -6,7 +6,7 @@
 - 뼈대: Node.js + Slack Bolt (Socket Mode)
 - 두뇌: 헤드리스 Claude (`claude -p`) — v1은 파일·명령 도구 미부여(순수 텍스트)
 - 저장: 파일 기반 JSON (`data/`)
-- 배포: 사무실 서버 scv(192.168.0.97) systemd `secretary-bot.service`
+- 배포: 사무실 서버 scv(192.168.x.x) systemd `secretary-bot.service`
 - 보안: 허용된 Slack ID만 응답, 외부 데이터 접근 없음
 
 ---

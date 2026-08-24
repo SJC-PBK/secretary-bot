@@ -12,7 +12,7 @@
 - 뼈대: Node.js + Slack Bolt (Socket Mode)
 - 두뇌(엔진): 헤드리스 Claude (`claude -p`) — 도구 미부여(순수 텍스트)
 - 저장: 파일 기반 JSON (리마인더·대화 맥락)
-- 배포: 사무실 서버(scv, 192.168.0.97)에 `secretary-bot.service` (systemd) 상시 가동
+- 배포: 사무실 서버(scv, 192.168.x.x)에 `secretary-bot.service` (systemd) 상시 가동
 
 ### 선택 근거
 - 뼈대(Bolt/Socket Mode): CC봇·투표봇과 동일한 검증된 방식, 공개 URL·포트 개방 불필요 → 보안·설정 간단. 차선책 파이썬을 안 고른 이유 = 기존 봇 2개가 모두 Node라 언어 통일이 유지보수에 유리.
