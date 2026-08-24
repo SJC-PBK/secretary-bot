@@ -794,6 +794,16 @@ app.message(async ({ message, client }) => {
         return;
       }
 
+      case 'users_list': {
+        if (user !== ADMIN && !admins.isAdmin(email)) { await reply('승인 사용자 목록은 관리자만 볼 수 있어요.'); return; }
+        const reg = users.load();
+        const ids = Object.keys(reg);
+        if (ids.length === 0) { await reply('아직 승인된 사용자가 없어요.'); return; }
+        const lines = ids.map((id) => `- ${reg[id].email || '(이메일 없음)'} (${id})${id === ADMIN ? ' [관리자]' : ''}`);
+        await reply(`장 비서 승인 사용자 ${ids.length}명:\n${lines.join('\n')}\n\n해제하려면 "해제 <ID>"라고 하세요.`);
+        return;
+      }
+
       case 'memdoc_open': {
         if (!gdrive.configured()) { await reply('구글 드라이브 연동이 아직 설정 전이에요(관리자 설정 필요).'); return; }
         if (!email) { await reply('드라이브 저장용 이메일이 등록되지 않았어요(관리자에게 문의).'); return; }
