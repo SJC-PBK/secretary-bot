@@ -20,6 +20,7 @@ const kakao = require('./lib/kakao');
 const transit = require('./lib/transit');
 const stt = require('./lib/stt');
 const canvas = require('./lib/canvas');
+const mindmap = require('./lib/mindmap');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -946,6 +947,22 @@ app.message(async ({ message, client }) => {
         await reply(`✅ 설문지를 만들었어요: ${spec.title || '설문지'} (${(spec.questions || []).length}문항)\n편집: ${res.editUrl}${respLine}`);
         memory.append(user, 'user', text);
         memory.append(user, 'assistant', `[구글 설문지 생성: ${spec.title || ''}] ${res.editUrl}`);
+        return;
+      }
+
+      case 'mindmap_create': {
+        if (!mindmap.configured()) { await reply('마인드맵 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        const src = attachedText ? (text + '\n\n[첨부/전사 내용]\n' + attachedText) : text;
+        await setStatus('🧠 마인드맵 구조를 구성하고 있어요…');
+        const spec = await claude.buildMindmap(src, ctx, facts, useOpus);
+        if (!spec) { await reply('마인드맵 구조를 만들지 못했어요. 주제나 정리할 내용을 조금 더 구체적으로 알려주세요.'); return; }
+        const data = mindmap.buildData(spec);
+        await setStatus('🗺️ 마인드맵을 생성하고 있어요…');
+        const res = await mindmap.createMap(spec.title || '마인드맵', data);
+        if (!res.ok) { console.error('마인드맵 생성 실패:', res.error); await reply('마인드맵 생성에 실패했어요. 잠시 후 다시 시도해 주세요.'); return; }
+        await reply(`🧠 마인드맵을 만들었어요: ${spec.title || '마인드맵'} (노드 ${data.nodes.length}개)\n${res.link}\n\n전 직원이 링크로 열람할 수 있어요.`);
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[마인드맵 생성: ${spec.title || ''}] ${res.link}`);
         return;
       }
 
