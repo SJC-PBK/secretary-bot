@@ -449,35 +449,35 @@ app.message(async ({ message, client }) => {
 
       case 'todo_add': {
         if (!data.text) { await reply('어떤 일을 목록에 넣을까요?'); return; }
-        const item = todos.add(user, data.text, data.due || null);
-        const count = todos.list(user).length;
+        const item = await todos.add(user, email, data.text, data.due || null);
+        const count = (await todos.list(user, email)).length;
         const dl = todos.dueLabel(item.due);
         await reply(`할 일에 추가했어요 (${count}개): ${item.text}${dl ? ` — ${dl}` : ''}`);
         return;
       }
 
       case 'todo_list': {
-        const items = todos.list(user);
+        const items = await todos.list(user, email);
         if (items.length === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
         await reply('할 일 목록:\n' + items.map((t, i) => { const dl = todos.dueLabel(t.due); return `${i + 1}. ${t.text}${dl ? ` (${dl})` : ''}`; }).join('\n'));
         return;
       }
 
       case 'todo_move': {
-        const n = todos.list(user).length;
+        const n = (await todos.list(user, email)).length;
         if (n === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
         if (!Number.isInteger(data.from) || !Number.isInteger(data.to)) { await reply('몇 번을 몇 번으로 옮길까요? (예: "14번을 6번으로 옮겨줘")'); return; }
-        const moved = todos.move(user, data.from, data.to);
+        const moved = await todos.move(user, email, data.from, data.to);
         if (!moved) { await reply(`옮기지 못했어요. 목록은 1~${n}번까지예요.`); return; }
-        const items = todos.list(user);
+        const items = await todos.list(user, email);
         await reply(`${data.from}번을 ${data.to}번으로 옮겼어요.\n\n할 일 목록:\n` + items.map((t, i) => { const dl = todos.dueLabel(t.due); return `${i + 1}. ${t.text}${dl ? ` (${dl})` : ''}`; }).join('\n'));
         return;
       }
 
       case 'todo_edit': {
-        if (todos.list(user).length === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
+        if ((await todos.list(user, email)).length === 0) { await reply('할 일 목록이 비어 있어요.'); return; }
         if (!data.text) { await reply('어떤 내용으로 바꿀까요?'); return; }
-        const res = todos.edit(user, { number: data.number, match: data.match, text: data.text });
+        const res = await todos.edit(user, email, { number: data.number, match: data.match, text: data.text });
         if (!res) { await reply('바꿀 항목을 찾지 못했어요. 번호나 기존 문구로 알려주세요.'); return; }
         await reply(`수정했어요: "${res.old}" → "${res.text}"`);
         return;
@@ -488,7 +488,8 @@ app.message(async ({ message, client }) => {
         await setStatus('📝 회의 내용에서 할 일을 뽑고 있어요…');
         const items = await claude.extractActionItems(source, nowIso);
         if (!items || items.length === 0) { await reply('회의 내용에서 뽑아낼 할 일을 찾지 못했어요.'); return; }
-        const added = items.map((it) => todos.add(user, it.owner ? `[${it.owner}] ${it.text}` : it.text, it.due || null));
+        const added = [];
+        for (const it of items) added.push(await todos.add(user, email, it.owner ? `[${it.owner}] ${it.text}` : it.text, it.due || null));
         const lines = added.map((t, i) => { const dl = todos.dueLabel(t.due); return `  ${i + 1}. ${t.text}${dl ? ` (${dl})` : ''}`; });
         await reply(`회의에서 할 일 ${added.length}건을 목록에 추가했어요:\n${lines.join('\n')}`);
         memory.append(user, 'user', text);
@@ -497,12 +498,12 @@ app.message(async ({ message, client }) => {
       }
 
       case 'todo_done': {
-        const items = todos.list(user);
+        const items = await todos.list(user, email);
         if (items.length === 0) { await reply('완료할 할 일이 없어요.'); return; }
         if (!data.number) { await reply('몇 번을 완료할까요? 번호를 알려주세요.'); return; }
         const target = items[data.number - 1];
         if (!target) { await reply('그 번호의 할 일이 없어요.'); return; }
-        const done = todos.complete(user, target.id);
+        const done = await todos.complete(user, email, target.id);
         await reply(done ? `완료했어요: ${target.text}` : '완료하지 못했어요.');
         return;
       }
