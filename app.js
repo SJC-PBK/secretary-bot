@@ -21,6 +21,7 @@ const transit = require('./lib/transit');
 const stt = require('./lib/stt');
 const canvas = require('./lib/canvas');
 const mindmap = require('./lib/mindmap');
+const plugvote = require('./lib/plugvote');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -963,6 +964,37 @@ app.message(async ({ message, client }) => {
         await reply(`🧠 마인드맵을 만들었어요: ${spec.title || '마인드맵'} (노드 ${data.nodes.length}개)\n${res.link}\n\n전 직원이 링크로 열람할 수 있어요.`);
         memory.append(user, 'user', text);
         memory.append(user, 'assistant', `[마인드맵 생성: ${spec.title || ''}] ${res.link}`);
+        return;
+      }
+
+      case 'plugvote_create': {
+        if (!plugvote.configured()) { await reply('투표/룰렛 기능이 아직 설정 전이에요(관리자 설정 필요).'); return; }
+        const chm = rawText.match(/<#(C[A-Z0-9]+)\|([^>]*)>/); // #채널 멘션 → <#Cxxx|이름>
+        if (!chm) { await reply('어느 채널에 올릴까요? 올릴 채널을 #채널명 으로 넣어 다시 말씀해 주세요. (예: "#점심 채널에 점심 메뉴 투표 올려줘")'); return; }
+        const channel = chm[1];
+        const chName = chm[2] || '채널';
+        await setStatus('🗳️ 투표/룰렛을 구성하고 있어요…');
+        const spec = await claude.buildVoteSpec(text, useOpus);
+        if (!spec) { await reply('투표/룰렛 내용을 만들지 못했어요. 주제나 선택지를 조금 더 알려주세요.'); return; }
+        const chanErr = (e) => (e === 'not_in_channel' || e === 'channel_not_found')
+          ? `#${chName} 채널에 올릴 수 없어요. 비공개 채널이면 그 채널에서 "/invite @투표봇" 한 뒤 다시 시도해 주세요.`
+          : '게시에 실패했어요. 잠시 후 다시 시도해 주세요.';
+        if (spec.kind === 'roulette') {
+          const cands = (spec.candidates || []).map((c) => String(c).trim()).filter(Boolean);
+          if (cands.length < 2) { await reply('룰렛 후보가 2명 이상 필요해요.'); return; }
+          const res = await plugvote.createRoulette({ channel, candidates: cands, creatorId: user });
+          if (!res.ok) { console.error('룰렛 생성 실패:', res.error); await reply(chanErr(res.error)); return; }
+          await reply(`🎡 #${chName} 채널에 룰렛을 올렸어요 (후보 ${cands.length}명). 채널에서 확인해 주세요.`);
+        } else {
+          const opts = (spec.options || []).map((o) => String(o).trim()).filter(Boolean);
+          if (opts.length < 2) { await reply('투표 선택지가 2개 이상 필요해요.'); return; }
+          const res = await plugvote.createPoll({ channel, question: spec.question || '투표', options: opts, multi: !!spec.multi, anonymous: spec.anonymous !== false, shuffle: !!spec.shuffle, closeMinutes: spec.closeMinutes || null, creatorId: user });
+          if (!res.ok) { console.error('투표 생성 실패:', res.error); await reply(chanErr(res.error)); return; }
+          const flags = [spec.multi ? '복수선택' : '', spec.anonymous === false ? '실명' : '', spec.closeMinutes ? `${spec.closeMinutes}분 자동마감` : ''].filter(Boolean).join(', ');
+          await reply(`🗳️ #${chName} 채널에 투표를 올렸어요: ${spec.question || '투표'} (${opts.length}개${flags ? ', ' + flags : ''}). 채널에서 확인해 주세요.`);
+        }
+        memory.append(user, 'user', text);
+        memory.append(user, 'assistant', `[투표/룰렛 게시: #${chName}]`);
         return;
       }
 
