@@ -982,9 +982,10 @@ app.message(async ({ message, client }) => {
         if (spec.kind === 'roulette') {
           const cands = (spec.candidates || []).map((c) => String(c).trim()).filter(Boolean);
           if (cands.length < 2) { await reply('룰렛 후보가 2명 이상 필요해요.'); return; }
-          const res = await plugvote.createRoulette({ channel, candidates: cands, creatorId: user });
+          const drawCount = Math.min(Math.max(parseInt(spec.drawCount, 10) || 1, 1), cands.length);
+          const res = await plugvote.createRoulette({ channel, candidates: cands, drawCount, creatorId: user });
           if (!res.ok) { console.error('룰렛 생성 실패:', res.error); await reply(chanErr(res.error)); return; }
-          await reply(`🎡 #${chName} 채널에 룰렛을 올렸어요 (후보 ${cands.length}명). 채널에서 확인해 주세요.`);
+          await reply(`🎡 #${chName} 채널에 룰렛을 올렸어요 (후보 ${cands.length}명${drawCount > 1 ? `, 한 번에 ${drawCount}개씩` : ''}). 채널에서 확인해 주세요.`);
         } else {
           const opts = (spec.options || []).map((o) => String(o).trim()).filter(Boolean);
           if (opts.length < 2) { await reply('투표 선택지가 2개 이상 필요해요.'); return; }
