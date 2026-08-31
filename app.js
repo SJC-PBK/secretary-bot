@@ -436,7 +436,9 @@ app.message(async ({ message, client }) => {
       case 'briefing': {
         let weather = '';
         try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch {}
-        let text = await briefing.buildForUser({ userId: user, email, greeting: false, weather });
+        let motivation = '';
+        try { motivation = await claude.motivation(); } catch {}
+        let text = await briefing.buildForUser({ userId: user, email, greeting: false, weather, motivation });
         // 관리자 그룹에게만 서버 상태 + 토큰 사용량 리포트 추가(온디맨드 — 즉시 최신 집계)
         if (admins.isAdmin(email)) {
           await setStatus('📊 토큰 사용량을 집계하고 있어요…');
@@ -1340,6 +1342,8 @@ async function onBriefing() {
   const reg = users.load();
   let weather = '';
   try { weather = await claude.weather(process.env.SECBOT_WEATHER_REGION || '서울 강남구'); } catch (e) { console.error('브리핑 날씨 조회 실패:', e && e.message); }
+  let motivation = '';
+  try { motivation = await claude.motivation(); } catch (e) { console.error('브리핑 동기부여 생성 실패:', e && e.message); }
   // 토큰 통계 저장(하루 1회) + 서버 상태 스냅샷 — 관리자 리포트용
   let stats = null;
   let server = null;
@@ -1347,7 +1351,7 @@ async function onBriefing() {
   for (const userId of Object.keys(reg)) {
     try {
       const email = users.emailFor(userId);
-      let text = await briefing.buildForUser({ userId, email, greeting: true, weather });
+      let text = await briefing.buildForUser({ userId, email, greeting: true, weather, motivation });
       if (text && server && admins.isAdmin(email)) text += '\n\n' + serverstat.formatReport(server, stats || {});
       if (text) await app.client.chat.postMessage({ channel: userId, text });
     } catch (e) {
