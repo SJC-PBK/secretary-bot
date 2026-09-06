@@ -151,15 +151,16 @@ async function readSharedTextFiles(files) {
     const ft = (f.filetype || '').toLowerCase();
     const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
     const isImg = ocr.isImage(mt, ft);
+    const isConv = ocr.isConvertibleDoc(mt, ft);
     const isDoc = isSlackDoc(mt, ft);
-    if (!isText && !isImg && !isDoc) continue;
+    if (!isText && !isImg && !isConv && !isDoc) continue;
     const url = f.url_private_download || f.url_private;
     if (!url) continue;
     try {
       const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) { console.error('첨부 다운로드 실패:', f.name, res.status); continue; }
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isImg ? await imageUnderstand(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
+      let txt = isImg ? await imageUnderstand(buf, f.name) : isConv ? ocr.convertDoc(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > MAX_CHARS) txt = txt.slice(0, MAX_CHARS) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
@@ -186,12 +187,13 @@ async function readLinkedSlackFiles(text, client) {
       const ft = (f.filetype || '').toLowerCase();
       const isText = mt.startsWith('text/') || ['txt', 'text', 'markdown', 'md', 'csv', 'log', 'json'].includes(ft);
       const isImg = ocr.isImage(mt, ft);
+      const isConv = ocr.isConvertibleDoc(mt, ft);
       const isDoc = isSlackDoc(mt, ft);
-      if (!isText && !isImg && !isDoc) continue;
+      if (!isText && !isImg && !isConv && !isDoc) continue;
       const res = await fetch(f.url_private_download || f.url_private, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) continue;
       const buf = Buffer.from(await res.arrayBuffer());
-      let txt = isImg ? await imageUnderstand(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
+      let txt = isImg ? await imageUnderstand(buf, f.name) : isConv ? ocr.convertDoc(buf, f.name) : isDoc ? stripHtml(decodeSmart(buf)) : decodeSmart(buf);
       if (!txt) continue;
       if (txt.length > 200000) txt = txt.slice(0, 200000) + '\n…(이하 생략)';
       parts.push(`# ${f.name}\n${txt}`);
