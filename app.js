@@ -1362,8 +1362,21 @@ async function onBriefing() {
   }
 }
 
+// 오후 1시 점심 안부 + 농담 (등록된 전원에게, 하루 1회)
+async function onLunch() {
+  const reg = users.load();
+  let msg = '';
+  try { msg = await claude.lunchJoke(); } catch (e) { console.error('점심 메시지 생성 실패:', e && e.message); }
+  if (!msg) return;
+  const text = '🍚 ' + msg;
+  for (const userId of Object.keys(reg)) {
+    try { await app.client.chat.postMessage({ channel: userId, text }); }
+    catch (e) { console.error('점심 메시지 발송 실패:', userId, e && e.message); }
+  }
+}
+
 (async () => {
   await app.start();
-  scheduler.startScheduler(onDue, onBriefing);
+  scheduler.startScheduler(onDue, onBriefing, onLunch);
   console.log('secretary-bot 기동');
 })();
