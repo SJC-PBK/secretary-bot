@@ -22,6 +22,7 @@ const stt = require('./lib/stt');
 const canvas = require('./lib/canvas');
 const mindmap = require('./lib/mindmap');
 const plugvote = require('./lib/plugvote');
+const promo = require('./lib/promo');
 const users = require('./lib/users');
 const claude = require('./lib/claude');
 const memory = require('./lib/memory');
@@ -1368,7 +1369,9 @@ async function onLunch() {
   let msg = '';
   try { msg = await claude.lunchJoke(); } catch (e) { console.error('점심 메시지 생성 실패:', e && e.message); }
   if (!msg) return;
-  const text = '🍚 ' + msg;
+  let promoText = '';
+  try { promoText = promo.format(2); } catch (e) { console.error('기능 소개 생성 실패:', e && e.message); }
+  const text = '🍚 ' + msg + (promoText ? '\n\n———\n' + promoText : '');
   for (const userId of Object.keys(reg)) {
     try { await app.client.chat.postMessage({ channel: userId, text }); }
     catch (e) { console.error('점심 메시지 발송 실패:', userId, e && e.message); }
