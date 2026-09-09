@@ -203,6 +203,52 @@ async function readLinkedSlackFiles(text, client) {
   return parts.join('\n\n');
 }
 
+// HTML → 읽을 수 있는 텍스트(스크립트·스타일 제거 후 태그 제거).
+function htmlToText(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(head|nav|header|footer|aside|form)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
+// 메시지 본문의 일반 웹 URL(슬랙 파일 링크 제외)을 서버에서 직접 가져와 텍스트로.
+// claude WebFetch가 거부하는 사이트(archive.org, 언론사 등)도 서버 fetch로 우회한다.
+async function readLinkedWebPages(text) {
+  if (!text) return '';
+  const urls = (text.match(/https?:\/\/[^\s<>|]+/g) || [])
+    .map((u) => u.replace(/[)\].,>]+$/, ''))
+    .filter((u) => !/slack\.com|slack-files\.com|slack-edge\.com/.test(u));
+  const uniq = [...new Set(urls)].slice(0, 3);
+  if (!uniq.length) return '';
+  const parts = [];
+  for (const url of uniq) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
+          'Accept-Language': 'ko,en;q=0.8',
+        },
+        redirect: 'follow',
+      });
+      if (!res.ok) { console.error('웹 링크 fetch 실패:', url, res.status); continue; }
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!/text\/html|text\/plain|xhtml/.test(ct)) continue;
+      let txt = /text\/plain/.test(ct) ? (await res.text()).trim() : htmlToText(await res.text());
+      if (!txt || txt.length < 40) continue;
+      if (txt.length > 120000) txt = txt.slice(0, 120000) + '\n…(이하 생략)';
+      parts.push(`# ${url}\n${txt}`);
+    } catch (e) { console.error('웹 링크 처리 오류:', url, e && e.message); }
+  }
+  return parts.join('\n\n');
+}
+
 // 첨부 파일 중 편집 가능한 한글 문서(hwp/hwpx) 하나를 찾는다.
 function findEditableDoc(files) {
   if (!Array.isArray(files)) return null;
@@ -347,6 +393,11 @@ app.message(async ({ message, client }) => {
     const linkedText = await readLinkedSlackFiles(text, client);
     if (linkedText) attachedText = attachedText ? (attachedText + '\n\n' + linkedText) : linkedText;
   } catch (e) { console.error('링크 파일 처리 오류:', e && e.message); }
+  // 일반 웹 URL은 서버에서 직접 가져와 붙인다(claude WebFetch가 막는 사이트 우회)
+  try {
+    const webText = await readLinkedWebPages(text);
+    if (webText) attachedText = attachedText ? (attachedText + '\n\n' + webText) : webText;
+  } catch (e) { console.error('웹 링크 처리 오류:', e && e.message); }
 
   // 슬랙 스레드로 hwpx 파일 전송(수정·채우기 결과 회신)
   const uploadHwpx = async (res, comment) => {
