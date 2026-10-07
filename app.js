@@ -866,6 +866,14 @@ app.message(async ({ message, client }) => {
 
       case 'cc_status': {
         if (user !== ADMIN && !admins.isAdmin(email)) { await reply('Claude Code 세션 관리는 관리자만 쓸 수 있어요.'); return; }
+        if (data.project) {
+          const f = relay.findProject(data.project);
+          if (!f.match && (f.candidates || []).length) {
+            const pick = await claude.pickOne(data.project, f.candidates.map((p) => p.name));
+            if (pick) f.match = f.candidates.find((p) => p.name === pick);
+          }
+          if (f.match) { await reply(relay.formatDetail(f.match)); return; }
+        }
         await reply(relay.formatStatus());
         return;
       }
