@@ -1523,6 +1523,6 @@ async function onLunch() {
 (async () => {
   await app.start();
   scheduler.startScheduler(onDue, onBriefing, onLunch);
-  relay.start(onRelayEvent);
+  relay.start(onRelayEvent, (text) => app.client.chat.postMessage({ channel: process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID, text: `🖥️ *scv 보고*\n${text}` }));
   console.log('secretary-bot 기동');
 })();
