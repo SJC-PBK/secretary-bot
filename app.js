@@ -1232,7 +1232,7 @@ app.message(async ({ message, client }) => {
       case 'chat':
       default: {
         const isGongmun = /기안|공문|시행문|보고서|계획서|복명서|품의|내부결재|결재/.test(text);
-        const styleHint = isGongmun ? '\n\n' + claude.GONGMUN_STYLE : '';
+        const styleHint = isGongmun ? '\n\n' + claude.gongmunStyle() : '';
         const q = (data.text || text) + styleHint + (attachedText ? '\n\n[첨부 파일 내용]\n' + attachedText : '');
         await setStatus('⏳ 답변을 작성하고 있어요…');
         const ans = await claude.ask(q, ctx, facts, useOpus, persona.get(user));
