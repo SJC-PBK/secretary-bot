@@ -37,6 +37,7 @@ const persona = require('./lib/persona');
 const memdoc = require('./lib/memdoc');
 const session = require('./lib/session');
 const calendar = require('./lib/calendar');
+const relay = require('./lib/relay');
 
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
@@ -863,6 +864,35 @@ app.message(async ({ message, client }) => {
         return;
       }
 
+      case 'cc_status': {
+        if (user !== ADMIN && !admins.isAdmin(email)) { await reply('Claude Code 세션 관리는 관리자만 쓸 수 있어요.'); return; }
+        await reply(relay.formatStatus());
+        return;
+      }
+
+      case 'cc_send': {
+        if (user !== ADMIN && !admins.isAdmin(email)) { await reply('Claude Code 세션 관리는 관리자만 쓸 수 있어요.'); return; }
+        if (!relay.configured()) { await reply('PC 세션 중계가 아직 설정 전이에요.'); return; }
+        const instruction = String(data.instruction || '').trim();
+        if (!instruction) { await reply('어떤 지시를 전달할지 알려주세요. 예: "cafe-pos에 메뉴 화면 폭 맞추라고 해줘"'); return; }
+        const found = relay.findProject(data.project);
+        if (!found.match && data.project && (found.candidates || []).length) {
+          const pick = await claude.pickOne(data.project, found.candidates.map((p) => p.name));
+          if (pick) found.match = found.candidates.find((p) => p.name === pick);
+        }
+        if (!found.match) {
+          const names = (found.candidates || []).map((p) => p.name);
+          await reply(names.length
+            ? `어느 프로젝트인지 정확히 알려주세요: ${names.join(', ')}`
+            : '전달할 세션을 찾지 못했어요. PC 중계기가 실행 중인지 확인해 주세요.');
+          return;
+        }
+        const p = found.match;
+        const job = relay.addJob({ project: p.name, cwd: p.cwd, prompt: instruction, force: !!data.force, channel: message.channel, threadTs: message.ts });
+        await reply(`📨 *${p.name}* 세션에 지시를 전달했어요. 끝나면 이 스레드로 결과를 알려드릴게요.\n(작업 ID ${job.id}${p.active ? ' · 지금 이 세션이 사용 중이면 끝난 뒤에 실행돼요' : ''})`);
+        return;
+      }
+
       case 'memdoc_open': {
         if (!gdrive.configured()) { await reply('구글 드라이브 연동이 아직 설정 전이에요(관리자 설정 필요).'); return; }
         if (!email) { await reply('드라이브 저장용 이메일이 등록되지 않았어요(관리자에게 문의).'); return; }
@@ -1325,6 +1355,56 @@ app.action('reject_user', async ({ ack, body, client, action }) => {
   } catch (e) { console.error('거절 버튼 오류:', e && e.message); }
 });
 
+// PC 세션 중계: 상태 변화 알림(결과는 지시한 스레드로)
+async function onRelayEvent(job, state) {
+  const post = (t, blocks) => app.client.chat.postMessage({ channel: job.channel, thread_ts: job.threadTs, text: t, blocks }).catch((e) => console.error('[relay] 슬랙 전송 실패:', e && e.message));
+  if (state === 'running') return; // 시작 알림은 생략(대화 소음 줄이기)
+  if (state === 'busy') { await post(`⏳ *${job.project}* 세션을 PC에서 사용 중이에요. 쉬는 틈에 이어서 실행할게요.`); return; }
+  if (state === 'error') { await post(`⚠️ *${job.project}* 작업이 실패했어요.\n${relay.cut(job.result, 1500)}`); return; }
+  if (state !== 'done') return;
+  const text = String(job.result || '(응답 없음)');
+  const body = text.length > 3500 ? text.slice(0, 3500) + '\n…(이하 생략 — PC 세션에서 전체 확인)' : text;
+  await post(`✅ *${job.project}* 작업 결과\n\n${body}`);
+  const cmds = relay.parseApprovals(text);
+  if (!cmds.length) return;
+  const reqJob = relay.updateJob(job.id, { approvals: cmds });
+  await post(`🔐 *${job.project}* 세션이 승인을 요청했어요:\n${cmds.map((c) => '• `' + c + '`').join('\n')}`, [
+    { type: 'section', text: { type: 'mrkdwn', text: `🔐 *${job.project}* 세션이 승인을 요청했어요:\n${cmds.map((c) => '• `' + c + '`').join('\n')}` } },
+    { type: 'actions', elements: [
+      { type: 'button', style: 'primary', text: { type: 'plain_text', text: '✅ 승인' }, action_id: 'relay_approve', value: reqJob.id },
+      { type: 'button', style: 'danger', text: { type: 'plain_text', text: '❌ 거절' }, action_id: 'relay_reject', value: reqJob.id },
+    ] },
+  ]);
+}
+
+// 세션 승인 요청 버튼(관리자만): 승인 → 같은 세션을 이어서 해당 명령만 허용해 실행
+app.action('relay_approve', async ({ ack, body, client, action }) => {
+  await ack();
+  const ADMIN = process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID;
+  if (body.user.id !== ADMIN) return;
+  const src = relay.getJob(action.value);
+  if (!src || !src.approvals || src.approvalHandled) {
+    await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: '이미 처리된 승인 요청이에요.', blocks: [] }).catch(() => {});
+    return;
+  }
+  relay.updateJob(src.id, { approvalHandled: 'approved' });
+  relay.addJob({
+    project: src.project, cwd: src.cwd, sessionId: src.sessionId, approve: src.approvals, force: true,
+    prompt: '관리자가 슬랙에서 다음 명령을 승인했다. 이 명령들을 실행하고 결과를 간결히 보고하라:\n' + src.approvals.map((c) => '- ' + c).join('\n'),
+    channel: src.channel, threadTs: src.threadTs,
+  });
+  await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: `✅ 승인함 — *${src.project}* 세션에서 실행할게요:\n${src.approvals.map((c) => '• `' + c + '`').join('\n')}`, blocks: [] }).catch(() => {});
+});
+
+app.action('relay_reject', async ({ ack, body, client, action }) => {
+  await ack();
+  const ADMIN = process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID;
+  if (body.user.id !== ADMIN) return;
+  const src = relay.getJob(action.value);
+  if (src) relay.updateJob(src.id, { approvalHandled: 'rejected' });
+  await client.chat.update({ channel: body.channel.id, ts: body.message.ts, text: `❌ 거절함 — ${src ? src.project + ' 세션의 ' : ''}요청 명령은 실행하지 않아요.`, blocks: [] }).catch(() => {});
+});
+
 // 리마인더 발송: 해당 사용자 DM으로 전송
 // 음성 첨부 백그라운드 처리: 다운로드 → 전사(whisper) → 회의록 정리 → 스레드로 전달
 async function processAudioJob({ channel, threadTs, file, useOpus }) {
@@ -1409,6 +1489,7 @@ async function onBriefing() {
       const email = users.emailFor(userId);
       let text = await briefing.buildForUser({ userId, email, greeting: true, weather, motivation });
       if (text && server && admins.isAdmin(email)) text += '\n\n' + serverstat.formatReport(server, stats || {});
+      if (text && relay.configured() && admins.isAdmin(email)) text += '\n\n' + relay.formatStatus({ recentHours: 24 });
       if (text) await app.client.chat.postMessage({ channel: userId, text });
     } catch (e) {
       console.error('브리핑 발송 실패:', userId, e && e.message);
@@ -1434,5 +1515,6 @@ async function onLunch() {
 (async () => {
   await app.start();
   scheduler.startScheduler(onDue, onBriefing, onLunch);
+  relay.start(onRelayEvent);
   console.log('secretary-bot 기동');
 })();
