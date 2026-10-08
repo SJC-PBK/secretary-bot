@@ -1523,6 +1523,11 @@ async function onLunch() {
 (async () => {
   await app.start();
   scheduler.startScheduler(onDue, onBriefing, onLunch);
-  relay.start(onRelayEvent, (text) => app.client.chat.postMessage({ channel: process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID, text: `🖥️ *scv 보고*\n${text}` }));
+  relay.start(onRelayEvent, async (text, team) => {
+    await app.client.chat.postMessage({ channel: process.env.SECBOT_ADMIN_SLACK_ID || process.env.ALLOWED_SLACK_USER_ID, text: `🖥️ *scv 보고*\n${text}` });
+    if (team && process.env.NOTIFY_TEAM_CHANNEL) {
+      await app.client.chat.postMessage({ channel: process.env.NOTIFY_TEAM_CHANNEL, text: `🖥️ *scv 보고*\n${text}` }).catch((e) => console.error('[notify] 팀 채널 전송 실패:', e && e.data ? e.data.error : e.message));
+    }
+  });
   console.log('secretary-bot 기동');
 })();
